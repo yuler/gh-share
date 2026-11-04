@@ -55,7 +55,7 @@ gh share skill install
   gh share post snippet.ts --title "Debounce helper" -c -o
   ```
 
-### 4. Manage your shares
+### 4. Manage and update your shares
 
 ```bash
 # List all published shares
@@ -66,6 +66,17 @@ gh share list --json
 
 # Open a share in your default browser
 gh share open 2026-11-04-worker-pool-pattern
+
+# Update content or metadata of an existing share (preserves untouched metadata)
+gh share update 2026-11-04-worker-pool-pattern new_worker.go
+gh share update 2026-11-04-worker-pool-pattern --title "New Title" --theme dark
+
+# Append content to an existing share
+gh share append 2026-11-04-worker-pool-pattern translation.md
+gh share append 2026-11-04-worker-pool-pattern "## Benchmark Results\n..."
+
+# Open a share in your text editor ($VISUAL or $EDITOR) and auto-push on save
+gh share edit 2026-11-04-worker-pool-pattern
 
 # Remove a share
 gh share rm 2026-11-04-worker-pool-pattern

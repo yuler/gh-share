@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/yuler/gh-share/internal/config"
+	"github.com/yuler/gh-share/internal/pages"
 )
 
 var openCmd = &cobra.Command{
@@ -20,7 +21,10 @@ var openCmd = &cobra.Command{
 
 		targetURL := cfg.BasePagesURL
 		if len(args) > 0 {
-			slug := strings.Trim(args[0], "/")
+			slug, err := pages.FindSlug(cfg.LocalDir, args[0])
+			if err != nil {
+				slug = pages.CleanSlug(args[0])
+			}
 			targetURL = fmt.Sprintf("%ss/%s/", strings.TrimRight(cfg.BasePagesURL, "/")+"/", slug)
 		}
 

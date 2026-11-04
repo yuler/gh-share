@@ -23,6 +23,20 @@ The fastest way to share content is using the `gh share` CLI:
   ```bash
   echo "# My Idea\n\nContent..." | gh share post --title "Product Idea" --type note
   ```
+- **Update an existing share**:
+  ```bash
+  gh share update <slug> new_version.md
+  gh share update <slug> --title "Updated Title"
+  ```
+- **Append content to a share**:
+  ```bash
+  gh share append <slug> translation.md
+  echo "## Update note" | gh share append <slug>
+  ```
+- **Edit an existing share in editor**:
+  ```bash
+  gh share edit <slug>
+  ```
 - **List existing shares**:
   ```bash
   gh share list
