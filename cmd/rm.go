@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/yuler/gh-share/internal/config"
 	"github.com/yuler/gh-share/internal/git"
+	"github.com/yuler/gh-share/internal/pages"
 )
 
 var rmCmd = &cobra.Command{
@@ -22,7 +22,11 @@ var rmCmd = &cobra.Command{
 			return err
 		}
 
-		slug := strings.Trim(args[0], "/")
+		slug, err := pages.FindSlug(cfg.LocalDir, args[0])
+		if err != nil {
+			return err
+		}
+
 		targetDir := filepath.Join(cfg.LocalDir, "s", slug)
 		if _, err := os.Stat(targetDir); os.IsNotExist(err) {
 			return fmt.Errorf("share '%s' not found at %s", slug, targetDir)

@@ -27,12 +27,199 @@ type ShareItem struct {
 type CreateOptions struct {
 	Title    string
 	Slug     string
-	Type     string // note, chat, code, media, raw
+	Date     string // YYYY-MM-DD
+	Type     string // note, chat, code, media, raw, html, raw_body
 	Theme    string // paper, dark, terminal, or empty
 	Lede     string
 	Tags     []string
 	CodeLang string
 	CodeFile string
+}
+
+type PostMetadata struct {
+	Slug      string   `json:"slug"`
+	Title     string   `json:"title"`
+	Date      string   `json:"date"`
+	Theme     string   `json:"theme,omitempty"`
+	Lede      string   `json:"lede,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
+	BodyHTML  string   `json:"body_html,omitempty"`
+	RawHTML   bool     `json:"raw_html"`
+	FooterURL string   `json:"footer_url,omitempty"`
+}
+
+var (
+	titleReg  = regexp.MustCompile(`(?i)<title>(.*?)</title>`)
+	h1Reg     = regexp.MustCompile(`(?i)<h1[^>]*>(.*?)</h1>`)
+	ledeReg   = regexp.MustCompile(`(?i)<p class="lede">(.*?)</p>`)
+	themeReg  = regexp.MustCompile(`(?i)<html[^>]*data-theme="([^"]*)"`)
+	timeReg   = regexp.MustCompile(`(?i)<time[^>]*datetime="([^"]*)"`)
+	tagReg    = regexp.MustCompile(`(?i)<span class="tag">(.*?)</span>`)
+	footerReg = regexp.MustCompile(`(?i)<footer[^>]*>[\s\S]*?<a href="([^"]*)".*?</footer>`)
+	headerReg = regexp.MustCompile(`(?i)<header class="meta">[\s\S]*?</header>`)
+)
+
+// ReplaceTitle replaces the <title> tag content in an HTML string
+func ReplaceTitle(htmlContent string, newTitle string) string {
+	escaped := html.EscapeString(newTitle)
+	if titleReg.MatchString(htmlContent) {
+		return titleReg.ReplaceAllString(htmlContent, fmt.Sprintf("<title>%s</title>", escaped))
+	}
+	return htmlContent
+}
+
+// CleanSlug extracts the slug from URLs, paths, or raw slug strings
+func CleanSlug(input string) string {
+	s := strings.TrimSpace(input)
+	if idx := strings.Index(s, "/s/"); idx != -1 {
+		s = s[idx+3:]
+	} else if strings.HasPrefix(s, "s/") {
+		s = strings.TrimPrefix(s, "s/")
+	}
+	s = strings.Trim(s, "/")
+	if idx := strings.Index(s, "?"); idx != -1 {
+		s = s[:idx]
+	}
+	if idx := strings.Index(s, "#"); idx != -1 {
+		s = s[:idx]
+	}
+	return s
+}
+
+// FindSlug locates a share directory under localDir/s matching the input slug
+func FindSlug(localDir string, input string) (string, error) {
+	slug := CleanSlug(input)
+	if slug == "" {
+		return "", fmt.Errorf("slug cannot be empty")
+	}
+
+	sDir := filepath.Join(localDir, "s")
+	if _, err := os.Stat(sDir); os.IsNotExist(err) {
+		return "", fmt.Errorf("no shares directory found at %s", sDir)
+	}
+
+	// 1. Direct exact match
+	exactDir := filepath.Join(sDir, slug)
+	exactIndex := filepath.Join(exactDir, "index.html")
+	if info, err := os.Stat(exactIndex); err == nil && !info.IsDir() {
+		return slug, nil
+	}
+
+	// 2. Scan s/ directory
+	entries, err := os.ReadDir(sDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to read shares directory: %w", err)
+	}
+
+	var candidates []string
+	slugLower := strings.ToLower(slug)
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		indexPath := filepath.Join(sDir, name, "index.html")
+		if _, err := os.Stat(indexPath); err != nil {
+			continue
+		}
+
+		nameLower := strings.ToLower(name)
+		if nameLower == slugLower {
+			return name, nil
+		}
+
+		// Check stripped date (e.g. YYYY-MM-DD-slug -> slug)
+		nameWithoutDate := nameLower
+		if len(nameLower) >= 11 && nameLower[4] == '-' && nameLower[7] == '-' && nameLower[10] == '-' {
+			nameWithoutDate = nameLower[11:]
+		}
+
+		if nameWithoutDate == slugLower {
+			candidates = append(candidates, name)
+			continue
+		}
+
+		// Check if substring match
+		if strings.Contains(nameLower, slugLower) {
+			candidates = append(candidates, name)
+		}
+	}
+
+	candidates = removeDuplicates(candidates)
+
+	if len(candidates) == 1 {
+		return candidates[0], nil
+	}
+	if len(candidates) > 1 {
+		return "", fmt.Errorf("ambiguous share '%s', multiple matches found: %s (please specify full slug)", input, strings.Join(candidates, ", "))
+	}
+
+	return "", fmt.Errorf("share '%s' not found in %s", input, sDir)
+}
+
+func removeDuplicates(items []string) []string {
+	seen := make(map[string]bool, len(items))
+	var result []string
+	for _, item := range items {
+		if !seen[item] {
+			seen[item] = true
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+// ParsePost parses metadata and body content from an existing share HTML document
+func ParsePost(htmlContent string) *PostMetadata {
+	meta := &PostMetadata{}
+
+	if m := titleReg.FindStringSubmatch(htmlContent); len(m) > 1 {
+		meta.Title = html.UnescapeString(strings.TrimSpace(m[1]))
+	} else if m := h1Reg.FindStringSubmatch(htmlContent); len(m) > 1 {
+		meta.Title = html.UnescapeString(strings.TrimSpace(m[1]))
+	}
+
+	if m := themeReg.FindStringSubmatch(htmlContent); len(m) > 1 {
+		meta.Theme = strings.TrimSpace(m[1])
+	}
+
+	if m := timeReg.FindStringSubmatch(htmlContent); len(m) > 1 {
+		meta.Date = strings.TrimSpace(m[1])
+	}
+
+	if m := ledeReg.FindStringSubmatch(htmlContent); len(m) > 1 {
+		meta.Lede = html.UnescapeString(strings.TrimSpace(m[1]))
+	}
+
+	searchHeader := htmlContent
+	if hm := headerReg.FindString(htmlContent); hm != "" {
+		searchHeader = hm
+	}
+	tagMatches := tagReg.FindAllStringSubmatch(searchHeader, -1)
+	for _, tm := range tagMatches {
+		if len(tm) > 1 {
+			meta.Tags = append(meta.Tags, html.UnescapeString(strings.TrimSpace(tm[1])))
+		}
+	}
+
+	if m := footerReg.FindStringSubmatch(htmlContent); len(m) > 1 {
+		meta.FooterURL = strings.TrimSpace(m[1])
+	}
+
+	lower := strings.ToLower(htmlContent)
+	headerEnd := strings.Index(lower, "</header>")
+	footerStart := strings.LastIndex(lower, "<footer")
+
+	if headerEnd != -1 && footerStart != -1 && footerStart > headerEnd {
+		meta.BodyHTML = strings.TrimSpace(htmlContent[headerEnd+len("</header>") : footerStart])
+		meta.RawHTML = false
+	} else {
+		meta.BodyHTML = htmlContent
+		meta.RawHTML = true
+	}
+
+	return meta
 }
 
 // GenerateSlug generates a slug like 2026-11-04-hello-world from a title
@@ -58,6 +245,69 @@ func ToKebabCase(s string) string {
 	return cleaned
 }
 
+// RenderBodyHTML renders content into an HTML snippet based on postType
+func RenderBodyHTML(content string, postType string, codeLang string, codeFile string) (string, error) {
+	switch postType {
+	case "code":
+		lang := codeLang
+		if lang == "" {
+			lang = "text"
+		}
+		dataTitle := ""
+		if codeFile != "" && codeFile != "." {
+			dataTitle = fmt.Sprintf(` data-title="%s"`, html.EscapeString(codeFile))
+		}
+		escapedCode := html.EscapeString(content)
+		return fmt.Sprintf(`<pre%s><code class="language-%s">%s</code></pre>`, dataTitle, html.EscapeString(lang), escapedCode), nil
+
+	case "chat":
+		// If content is already chat divs, use it; otherwise wrap lines or parse
+		if strings.Contains(content, `class="msg"`) {
+			return fmt.Sprintf(`<section class="chat">%s</section>`, content), nil
+		}
+		return fmt.Sprintf(`<section class="chat"><div class="msg" data-role="user"><p>%s</p></div></section>`, html.EscapeString(content)), nil
+
+	case "media", "raw_body", "html":
+		return content, nil
+
+	default: // "note" or markdown
+		var buf bytes.Buffer
+		if err := goldmark.Convert([]byte(content), &buf); err != nil {
+			return fmt.Sprintf("<p>%s</p>", html.EscapeString(content)), nil
+		}
+		return buf.String(), nil
+	}
+}
+
+// AppendBodyHTML joins existing body HTML and new body HTML cleanly
+func AppendBodyHTML(existingBody string, newBody string, newType string) string {
+	existingTrimmed := strings.TrimSpace(existingBody)
+	newTrimmed := strings.TrimSpace(newBody)
+
+	if existingTrimmed == "" {
+		return newTrimmed
+	}
+	if newTrimmed == "" {
+		return existingTrimmed
+	}
+
+	// If existing body contains a chat section and new content is a chat message
+	if strings.Contains(existingTrimmed, "</section>") && (newType == "chat" || strings.Contains(newTrimmed, `class="msg"`)) {
+		lastClose := strings.LastIndex(existingTrimmed, "</section>")
+		if lastClose != -1 {
+			snippet := newTrimmed
+			if strings.HasPrefix(snippet, `<section class="chat">`) && strings.HasSuffix(snippet, `</section>`) {
+				snippet = strings.TrimPrefix(snippet, `<section class="chat">`)
+				snippet = strings.TrimSuffix(snippet, `</section>`)
+				snippet = strings.TrimSpace(snippet)
+			}
+			return existingTrimmed[:lastClose] + "\n      " + snippet + "\n    " + existingTrimmed[lastClose:]
+		}
+	}
+
+	return existingTrimmed + "\n\n" + newTrimmed
+}
+
 // BuildHTML generates the complete HTML document
 func BuildHTML(content string, opts CreateOptions, basePagesURL string) (string, error) {
 	trimmed := strings.TrimSpace(content)
@@ -65,7 +315,11 @@ func BuildHTML(content string, opts CreateOptions, basePagesURL string) (string,
 		return content, nil
 	}
 
-	today := time.Now().Format("2006-01-02")
+	today := opts.Date
+	if today == "" {
+		today = time.Now().Format("2006-01-02")
+	}
+
 	title := opts.Title
 	if title == "" {
 		title = "Untitled Share"
@@ -87,37 +341,13 @@ func BuildHTML(content string, opts CreateOptions, basePagesURL string) (string,
 	}
 
 	var bodyHTML string
-	switch opts.Type {
-	case "code":
-		lang := opts.CodeLang
-		if lang == "" {
-			lang = "text"
-		}
-		dataTitle := ""
-		if opts.CodeFile != "" && opts.CodeFile != "." {
-			dataTitle = fmt.Sprintf(` data-title="%s"`, html.EscapeString(opts.CodeFile))
-		}
-		escapedCode := html.EscapeString(content)
-		bodyHTML = fmt.Sprintf(`<pre%s><code class="language-%s">%s</code></pre>`, dataTitle, html.EscapeString(lang), escapedCode)
-
-	case "chat":
-		// If content is already chat divs, use it; otherwise wrap lines or parse
-		if strings.Contains(content, `class="msg"`) {
-			bodyHTML = fmt.Sprintf(`<section class="chat">%s</section>`, content)
-		} else {
-			// Convert markdown or plain text to a chat section
-			bodyHTML = fmt.Sprintf(`<section class="chat"><div class="msg" data-role="user"><p>%s</p></div></section>`, html.EscapeString(content))
-		}
-
-	case "media":
+	if opts.Type == "html" || opts.Type == "raw_body" {
 		bodyHTML = content
-
-	default: // "note" or markdown
-		var buf bytes.Buffer
-		if err := goldmark.Convert([]byte(content), &buf); err != nil {
-			bodyHTML = fmt.Sprintf("<p>%s</p>", html.EscapeString(content))
-		} else {
-			bodyHTML = buf.String()
+	} else {
+		var err error
+		bodyHTML, err = RenderBodyHTML(content, opts.Type, opts.CodeLang, opts.CodeFile)
+		if err != nil {
+			return "", err
 		}
 	}
 
@@ -171,8 +401,6 @@ func ListShares(localDir string, basePagesURL string) ([]ShareItem, error) {
 	}
 
 	var items []ShareItem
-	titleReg := regexp.MustCompile(`(?i)<title>(.*?)</title>`)
-	ledeReg := regexp.MustCompile(`(?i)<p class="lede">(.*?)</p>`)
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -202,13 +430,12 @@ func ListShares(localDir string, basePagesURL string) ([]ShareItem, error) {
 		// Parse title from index.html
 		htmlBytes, err := os.ReadFile(indexPath)
 		if err == nil {
-			matches := titleReg.FindSubmatch(htmlBytes)
-			if len(matches) > 1 {
-				item.Title = html.UnescapeString(string(matches[1]))
+			meta := ParsePost(string(htmlBytes))
+			if meta.Title != "" {
+				item.Title = meta.Title
 			}
-			ledeMatches := ledeReg.FindSubmatch(htmlBytes)
-			if len(ledeMatches) > 1 {
-				item.Lede = html.UnescapeString(string(ledeMatches[1]))
+			if meta.Lede != "" {
+				item.Lede = meta.Lede
 			}
 		}
 
