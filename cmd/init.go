@@ -53,12 +53,20 @@ var initCmd = &cobra.Command{
 
 		// 2. Ensure GitHub Pages is enabled
 		fmt.Printf("🌐 Ensuring GitHub Pages is enabled for %s...\n", cfg.FullRepo)
+		
+		// Check if Pages is already enabled using API
 		pagesCheckCmd := exec.Command("gh", "api", fmt.Sprintf("/repos/%s/pages", cfg.FullRepo))
 		if err := pagesCheckCmd.Run(); err != nil {
-			// Try enabling
-			enableCmd := exec.Command("gh", "api", "-X", "POST", fmt.Sprintf("/repos/%s/pages", cfg.FullRepo),
-				"-f", "source[branch]=main", "-f", "source[path]=/")
-			_ = enableCmd.Run()
+			// Pages not enabled, enable it with correct JSON format
+			enableCmd := exec.Command("sh", "-c", fmt.Sprintf("echo '{\"source\":{\"branch\":\"main\",\"path\":\"/\"}}' | gh api -X POST /repos/%s/pages --input -", cfg.FullRepo))
+			if err := enableCmd.Run(); err != nil {
+				fmt.Printf("⚠️  Warning: Failed to enable GitHub Pages: %v\n", err)
+				fmt.Printf("   You may need to manually enable GitHub Pages in repository settings\n")
+			} else {
+				fmt.Printf("✓ GitHub Pages enabled successfully\n")
+			}
+		} else {
+			fmt.Printf("✓ GitHub Pages already enabled\n")
 		}
 
 		// 3. Ensure local clone
