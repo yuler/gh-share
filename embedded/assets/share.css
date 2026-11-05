@@ -223,15 +223,24 @@ figcaption {
   text-align: center;
 }
 
+.table-wrap {
+  overflow-x: auto;
+  margin: 0 0 var(--space);
+  -webkit-overflow-scrolling: touch;
+}
+.table-wrap > table {
+  margin-bottom: 0;
+  width: max-content;
+  min-width: 100%;
+}
 table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.92rem;
-  display: block;
-  overflow-x: auto;
 }
 th, td { padding: 0.5em 0.75em; border-bottom: 1px solid var(--border); text-align: left; }
-th { font-weight: 600; }
+th { font-weight: 600; background: var(--surface); }
+tr:nth-child(even) td { background: color-mix(in srgb, var(--surface) 55%, transparent); }
 
 kbd {
   font-family: var(--font-mono);
@@ -402,6 +411,34 @@ details.msg > summary::after { content: " · " attr(data-role); opacity: 0.6; }
 pre:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 @media (hover: none) { .copy-btn { opacity: 1; } }
 
+.theme-toggle {
+  position: fixed;
+  top: 0.85rem;
+  right: 0.85rem;
+  z-index: 50;
+  width: 2.4rem;
+  height: 2.4rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: 500 1.05rem/1 var(--font-sans);
+  color: var(--fg);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.theme-toggle:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  color: var(--accent);
+}
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* highlight.js token colors, driven by --syn-* tokens */
 .hljs-comment, .hljs-quote { color: var(--syn-comment); font-style: italic; }
 .hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-built_in, .hljs-type { color: var(--syn-keyword); }
@@ -422,6 +459,6 @@ pre:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
 }
 
 @media print {
-  .copy-btn { display: none; }
+  .copy-btn, .theme-toggle { display: none; }
   pre { white-space: pre-wrap; }
 }

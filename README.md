@@ -78,6 +78,10 @@ gh share append 2026-11-04-worker-pool-pattern "## Benchmark Results\n..."
 # Open a share in your text editor ($VISUAL or $EDITOR) and auto-push on save
 gh share edit 2026-11-04-worker-pool-pattern
 
+# Rename a share (leaves an HTML redirect at the old path by default)
+gh share mv 2026-11-05-old-slug 2026-11-05-new-slug
+gh share mv 2026-11-05-old-slug 2026-11-05-new-slug --no-redirect
+
 # Remove a share
 gh share rm 2026-11-04-worker-pool-pattern
 ```
@@ -86,7 +90,8 @@ gh share rm 2026-11-04-worker-pool-pattern
 
 - Default target repository: `<gh-username>/share` (can be overridden with `-R <owner>/<repo>` or `GH_SHARE_REPO`).
 - Output URL structure: `https://<owner>.github.io/share/s/<slug>/`.
-- Slug format: `YYYY-MM-DD-<kebab-title>`.
+- Slug format: `YYYY-MM-DD-<english-kebab>` (ASCII only — no Chinese in the path).
+- Renames via `gh share mv` leave an HTML redirect stub at the old path (GitHub Pages cannot emit HTTP 301/302).
 - Built-in themes: `paper` (serif), `dark`, `terminal` (monospace green), or default (auto light/dark).
 
 ## License

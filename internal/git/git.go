@@ -42,7 +42,16 @@ func Pull(localDir string) error {
 
 // AddAndCommit stages the path and creates a commit
 func AddAndCommit(localDir string, relPath string, message string) error {
-	addCmd := exec.Command("git", "-C", localDir, "add", relPath)
+	return AddPathsAndCommit(localDir, []string{relPath}, message)
+}
+
+// AddPathsAndCommit stages one or more paths and creates a commit
+func AddPathsAndCommit(localDir string, relPaths []string, message string) error {
+	if len(relPaths) == 0 {
+		return fmt.Errorf("git add failed: no paths provided")
+	}
+	args := append([]string{"-C", localDir, "add", "--"}, relPaths...)
+	addCmd := exec.Command("git", args...)
 	var errBuf bytes.Buffer
 	addCmd.Stderr = &errBuf
 	if err := addCmd.Run(); err != nil {
@@ -54,6 +63,17 @@ func AddAndCommit(localDir string, relPath string, message string) error {
 	commitCmd.Stderr = &errBuf
 	if err := commitCmd.Run(); err != nil {
 		return fmt.Errorf("git commit failed: %s (%w)", errBuf.String(), err)
+	}
+	return nil
+}
+
+// Move renames a path inside the repo with git mv.
+func Move(localDir string, oldRel, newRel string) error {
+	cmd := exec.Command("git", "-C", localDir, "mv", oldRel, newRel)
+	var errBuf bytes.Buffer
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git mv failed: %s (%w)", errBuf.String(), err)
 	}
 	return nil
 }

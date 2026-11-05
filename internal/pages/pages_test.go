@@ -7,6 +7,24 @@ import (
 	"testing"
 )
 
+func TestToKebabCaseASCIIOnly(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"Debounce helper", "debounce-helper"},
+		{"Google Colab 调研与使用指南", "google-colab"},
+		{"纯中文标题", ""},
+		{"RTX PRO 6000!", "rtx-pro-6000"},
+	}
+	for _, tc := range tests {
+		actual := ToKebabCase(tc.input)
+		if actual != tc.expected {
+			t.Errorf("ToKebabCase(%q) = %q, expected %q", tc.input, actual, tc.expected)
+		}
+	}
+}
+
 func TestCleanSlug(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -174,6 +192,26 @@ func TestParsePostAndBuildHTML(t *testing.T) {
 	}
 }
 
+func TestRenderBodyHTMLTable(t *testing.T) {
+	md := `| Name | Units |
+| ---- | ----- |
+| T4   | 1.19  |
+`
+	htmlOut, err := RenderBodyHTML(md, "note", "", "")
+	if err != nil {
+		t.Fatalf("RenderBodyHTML: %v", err)
+	}
+	if !strings.Contains(htmlOut, "<table>") {
+		t.Fatalf("expected <table> in rendered HTML, got:\n%s", htmlOut)
+	}
+	if !strings.Contains(htmlOut, "<th>") || !strings.Contains(htmlOut, "T4") {
+		t.Fatalf("expected table header/cells, got:\n%s", htmlOut)
+	}
+	if strings.Contains(htmlOut, "| T4") {
+		t.Fatalf("pipe table should not remain as plain text, got:\n%s", htmlOut)
+	}
+}
+
 func TestAppendBodyHTML(t *testing.T) {
 	// Standard markdown notes
 	existing := "<p>First paragraph.</p>"
@@ -203,5 +241,122 @@ func TestReplaceTitle(t *testing.T) {
 	updated := ReplaceTitle(doc, "New Title & More")
 	if !strings.Contains(updated, "<title>New Title &amp; More</title>") {
 		t.Errorf("expected escaped new title, got %s", updated)
+	}
+}
+
+func TestBuildRedirectHTML(t *testing.T) {
+	abs := "https://yuler.github.io/share/s/2026-11-05-google-colab-guide/"
+	htmlOut := BuildRedirectHTML("2026-11-05-google-colab-guide", abs)
+
+	if !IsRedirect(htmlOut) {
+		t.Fatal("expected IsRedirect true")
+	}
+	if !strings.Contains(htmlOut, `data-share-type="redirect"`) {
+		t.Fatal("missing data-share-type")
+	}
+	if !strings.Contains(htmlOut, `url=../2026-11-05-google-colab-guide/`) {
+		t.Fatalf("missing meta refresh relative url, got:\n%s", htmlOut)
+	}
+	if !strings.Contains(htmlOut, abs) {
+		t.Fatalf("missing absolute url, got:\n%s", htmlOut)
+	}
+	if target := RedirectTarget(htmlOut); target != "2026-11-05-google-colab-guide" {
+		t.Fatalf("RedirectTarget = %q, want 2026-11-05-google-colab-guide", target)
+	}
+}
+
+func TestIsRedirectFalseForNormalShare(t *testing.T) {
+	doc := `<html lang="zh-CN" data-theme="paper"><head><title>Hi</title></head></html>`
+	if IsRedirect(doc) {
+		t.Fatal("normal share should not be a redirect")
+	}
+}
+
+func TestListSharesSkipsRedirects(t *testing.T) {
+	tempDir := t.TempDir()
+	sDir := filepath.Join(tempDir, "s")
+
+	realSlug := "2026-11-05-google-colab-guide"
+	oldSlug := "2026-11-05-google-colab-old"
+	realDir := filepath.Join(sDir, realSlug)
+	oldDir := filepath.Join(sDir, oldSlug)
+	if err := os.MkdirAll(realDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(oldDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	realHTML := `<html><head><title>Colab Guide</title></head><body><header class="meta"><h1>Colab Guide</h1></header></body></html>`
+	abs := "https://example.com/share/s/" + realSlug + "/"
+	if err := os.WriteFile(filepath.Join(realDir, "index.html"), []byte(realHTML), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldDir, "index.html"), []byte(BuildRedirectHTML(realSlug, abs)), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := ListShares(tempDir, "https://example.com/share/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 share (redirect skipped), got %d: %+v", len(items), items)
+	}
+	if items[0].Slug != realSlug {
+		t.Fatalf("expected %s, got %s", realSlug, items[0].Slug)
+	}
+}
+
+func TestFindSlugFollowsRedirect(t *testing.T) {
+	tempDir := t.TempDir()
+	sDir := filepath.Join(tempDir, "s")
+
+	realSlug := "2026-11-05-google-colab-guide"
+	oldSlug := "2026-11-05-google-colab-调研"
+	for _, slug := range []string{realSlug, oldSlug} {
+		if err := os.MkdirAll(filepath.Join(sDir, slug), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(sDir, realSlug, "index.html"), []byte("<html><title>Real</title></html>"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	abs := "https://example.com/share/s/" + realSlug + "/"
+	if err := os.WriteFile(filepath.Join(sDir, oldSlug, "index.html"), []byte(BuildRedirectHTML(realSlug, abs)), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := FindSlug(tempDir, oldSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != realSlug {
+		t.Fatalf("FindSlug followed redirect: got %q, want %q", got, realSlug)
+	}
+
+	dir, err := FindSlugDir(tempDir, oldSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dir != oldSlug {
+		t.Fatalf("FindSlugDir should not follow: got %q, want %q", dir, oldSlug)
+	}
+}
+
+func TestFindSlugBrokenRedirect(t *testing.T) {
+	tempDir := t.TempDir()
+	sDir := filepath.Join(tempDir, "s")
+	oldSlug := "2026-11-05-missing-target"
+	if err := os.MkdirAll(filepath.Join(sDir, oldSlug), 0755); err != nil {
+		t.Fatal(err)
+	}
+	stub := BuildRedirectHTML("2026-11-05-gone", "https://example.com/share/s/2026-11-05-gone/")
+	if err := os.WriteFile(filepath.Join(sDir, oldSlug, "index.html"), []byte(stub), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := FindSlug(tempDir, oldSlug)
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("expected missing target error, got %v", err)
 	}
 }

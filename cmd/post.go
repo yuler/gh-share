@@ -226,7 +226,7 @@ func openBrowser(url string) {
 
 func init() {
 	postCmd.Flags().StringVarP(&postTitle, "title", "t", "", "Title of the share")
-	postCmd.Flags().StringVarP(&postSlug, "slug", "s", "", "Custom slug (default: YYYY-MM-DD-<title>)")
+	postCmd.Flags().StringVarP(&postSlug, "slug", "s", "", "Custom slug (ASCII English kebab; default: YYYY-MM-DD-<title>)")
 	postCmd.Flags().StringVar(&postType, "type", "", "Type: note, chat, code, media, or raw")
 	postCmd.Flags().StringVar(&postTheme, "theme", "", "Theme: paper, dark, terminal")
 	postCmd.Flags().StringVar(&postLede, "lede", "", "Subtitle / summary lede")

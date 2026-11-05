@@ -12,6 +12,12 @@ import (
 	"time"
 
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
+)
+
+// markdown converts CommonMark + GFM (tables, strikethrough, autolink, task lists).
+var markdown = goldmark.New(
+	goldmark.WithExtensions(extension.GFM),
 )
 
 type ShareItem struct {
@@ -49,14 +55,18 @@ type PostMetadata struct {
 }
 
 var (
-	titleReg  = regexp.MustCompile(`(?i)<title>(.*?)</title>`)
-	h1Reg     = regexp.MustCompile(`(?i)<h1[^>]*>(.*?)</h1>`)
-	ledeReg   = regexp.MustCompile(`(?i)<p class="lede">(.*?)</p>`)
-	themeReg  = regexp.MustCompile(`(?i)<html[^>]*data-theme="([^"]*)"`)
-	timeReg   = regexp.MustCompile(`(?i)<time[^>]*datetime="([^"]*)"`)
-	tagReg    = regexp.MustCompile(`(?i)<span class="tag">(.*?)</span>`)
-	footerReg = regexp.MustCompile(`(?i)<footer[^>]*>[\s\S]*?<a href="([^"]*)".*?</footer>`)
-	headerReg = regexp.MustCompile(`(?i)<header class="meta">[\s\S]*?</header>`)
+	titleReg           = regexp.MustCompile(`(?i)<title>(.*?)</title>`)
+	h1Reg              = regexp.MustCompile(`(?i)<h1[^>]*>(.*?)</h1>`)
+	ledeReg            = regexp.MustCompile(`(?i)<p class="lede">(.*?)</p>`)
+	themeReg           = regexp.MustCompile(`(?i)<html[^>]*data-theme="([^"]*)"`)
+	timeReg            = regexp.MustCompile(`(?i)<time[^>]*datetime="([^"]*)"`)
+	tagReg             = regexp.MustCompile(`(?i)<span class="tag">(.*?)</span>`)
+	footerReg          = regexp.MustCompile(`(?i)<footer[^>]*>[\s\S]*?<a href="([^"]*)".*?</footer>`)
+	headerReg          = regexp.MustCompile(`(?i)<header class="meta">[\s\S]*?</header>`)
+	redirectTypeReg    = regexp.MustCompile(`(?i)data-share-type\s*=\s*["']redirect["']`)
+	redirectCanonical  = regexp.MustCompile(`(?i)<link[^>]*rel=["']canonical["'][^>]*href=["']([^"']+)["']`)
+	redirectRefreshURL = regexp.MustCompile(`(?i)<meta[^>]*http-equiv=["']refresh["'][^>]*content=["'][^"']*url=([^"'\s>]+)`)
+	redirectAnchorHref = regexp.MustCompile(`(?i)<a\s+href=["']([^"']+)["']`)
 )
 
 // ReplaceTitle replaces the <title> tag content in an HTML string
@@ -86,8 +96,109 @@ func CleanSlug(input string) string {
 	return s
 }
 
-// FindSlug locates a share directory under localDir/s matching the input slug
+// BuildRedirectHTML builds a minimal HTML redirect stub for GitHub Pages.
+// Relative target is ../<newSlug>/; absoluteURL is used for canonical and body link.
+func BuildRedirectHTML(newSlug, absoluteURL string) string {
+	rel := "../" + newSlug + "/"
+	escRel := html.EscapeString(rel)
+	escAbs := html.EscapeString(absoluteURL)
+	return fmt.Sprintf(`<!doctype html>
+<html lang="en" data-share-type="redirect">
+<head>
+  <meta charset="utf-8">
+  <meta name="robots" content="noindex">
+  <meta http-equiv="refresh" content="0; url=%s">
+  <link rel="canonical" href="%s">
+  <title>Moved</title>
+  <script>location.replace(%q);</script>
+</head>
+<body>
+  <p>Moved to <a href="%s">%s</a>.</p>
+</body>
+</html>
+`, escRel, escAbs, rel, escRel, escAbs)
+}
+
+// IsRedirect reports whether htmlContent is a share redirect stub.
+func IsRedirect(htmlContent string) bool {
+	return redirectTypeReg.MatchString(htmlContent)
+}
+
+// RedirectTarget extracts the destination slug from a redirect stub.
+// Prefers relative ../slug/ paths; falls back to CleanSlug of absolute URLs.
+func RedirectTarget(htmlContent string) string {
+	var href string
+	if m := redirectRefreshURL.FindStringSubmatch(htmlContent); len(m) > 1 {
+		href = strings.TrimSpace(m[1])
+	} else if m := redirectCanonical.FindStringSubmatch(htmlContent); len(m) > 1 {
+		href = strings.TrimSpace(m[1])
+	} else if m := redirectAnchorHref.FindStringSubmatch(htmlContent); len(m) > 1 {
+		href = strings.TrimSpace(m[1])
+	}
+	if href == "" {
+		return ""
+	}
+	href = html.UnescapeString(href)
+	// Relative form: ../new-slug/ or ./new-slug/
+	if strings.HasPrefix(href, "../") || strings.HasPrefix(href, "./") {
+		return CleanSlug(filepath.Base(strings.TrimSuffix(href, "/")))
+	}
+	return CleanSlug(href)
+}
+
+// readShareIndex returns index.html contents for slug, or empty if missing.
+func readShareIndex(localDir, slug string) (string, error) {
+	indexPath := filepath.Join(localDir, "s", slug, "index.html")
+	data, err := os.ReadFile(indexPath)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// resolveRedirect follows redirect stubs to the final share slug (max 5 hops).
+func resolveRedirect(localDir, slug string) (string, error) {
+	seen := map[string]bool{}
+	current := slug
+	for i := 0; i < 5; i++ {
+		if seen[current] {
+			return "", fmt.Errorf("share '%s' has a redirect cycle", slug)
+		}
+		seen[current] = true
+
+		htmlContent, err := readShareIndex(localDir, current)
+		if err != nil {
+			return current, nil
+		}
+		if !IsRedirect(htmlContent) {
+			return current, nil
+		}
+		target := RedirectTarget(htmlContent)
+		if target == "" {
+			return "", fmt.Errorf("share '%s' is a redirect but has no target", current)
+		}
+		targetIndex := filepath.Join(localDir, "s", target, "index.html")
+		if _, err := os.Stat(targetIndex); err != nil {
+			return "", fmt.Errorf("share '%s' redirects to '%s', but that share was not found", current, target)
+		}
+		current = target
+	}
+	return "", fmt.Errorf("share '%s' redirect chain is too long", slug)
+}
+
+// FindSlug locates a share directory under localDir/s matching the input slug.
+// If the match is a redirect stub, it follows to the target share when present.
 func FindSlug(localDir string, input string) (string, error) {
+	return findSlug(localDir, input, true)
+}
+
+// FindSlugDir locates a share directory without following redirect stubs.
+// Used by mv so renaming targets the literal folder.
+func FindSlugDir(localDir string, input string) (string, error) {
+	return findSlug(localDir, input, false)
+}
+
+func findSlug(localDir string, input string, followRedirects bool) (string, error) {
 	slug := CleanSlug(input)
 	if slug == "" {
 		return "", fmt.Errorf("slug cannot be empty")
@@ -98,11 +209,18 @@ func FindSlug(localDir string, input string) (string, error) {
 		return "", fmt.Errorf("no shares directory found at %s", sDir)
 	}
 
+	finish := func(name string) (string, error) {
+		if followRedirects {
+			return resolveRedirect(localDir, name)
+		}
+		return name, nil
+	}
+
 	// 1. Direct exact match
 	exactDir := filepath.Join(sDir, slug)
 	exactIndex := filepath.Join(exactDir, "index.html")
 	if info, err := os.Stat(exactIndex); err == nil && !info.IsDir() {
-		return slug, nil
+		return finish(slug)
 	}
 
 	// 2. Scan s/ directory
@@ -126,7 +244,7 @@ func FindSlug(localDir string, input string) (string, error) {
 
 		nameLower := strings.ToLower(name)
 		if nameLower == slugLower {
-			return name, nil
+			return finish(name)
 		}
 
 		// Check stripped date (e.g. YYYY-MM-DD-slug -> slug)
@@ -149,7 +267,7 @@ func FindSlug(localDir string, input string) (string, error) {
 	candidates = removeDuplicates(candidates)
 
 	if len(candidates) == 1 {
-		return candidates[0], nil
+		return finish(candidates[0])
 	}
 	if len(candidates) > 1 {
 		return "", fmt.Errorf("ambiguous share '%s', multiple matches found: %s (please specify full slug)", input, strings.Join(candidates, ", "))
@@ -238,10 +356,16 @@ func GenerateSlug(title string) string {
 	return fmt.Sprintf("%s-%s", today, kebab)
 }
 
+// ToKebabCase keeps ASCII letters/digits only so slugs stay English-searchable URLs.
+// Non-ASCII (e.g. Chinese) is dropped; callers should pass an explicit English --slug
+// when the title has no Latin words.
 func ToKebabCase(s string) string {
-	reg := regexp.MustCompile(`[^a-zA-Z0-9\p{Han}]+`)
+	reg := regexp.MustCompile(`[^a-zA-Z0-9]+`)
 	cleaned := reg.ReplaceAllString(s, "-")
 	cleaned = strings.ToLower(strings.Trim(cleaned, "-"))
+	for strings.Contains(cleaned, "--") {
+		cleaned = strings.ReplaceAll(cleaned, "--", "-")
+	}
 	return cleaned
 }
 
@@ -272,7 +396,7 @@ func RenderBodyHTML(content string, postType string, codeLang string, codeFile s
 
 	default: // "note" or markdown
 		var buf bytes.Buffer
-		if err := goldmark.Convert([]byte(content), &buf); err != nil {
+		if err := markdown.Convert([]byte(content), &buf); err != nil {
 			return fmt.Sprintf("<p>%s</p>", html.EscapeString(content)), nil
 		}
 		return buf.String(), nil
@@ -427,10 +551,14 @@ func ListShares(localDir string, basePagesURL string) ([]ShareItem, error) {
 			item.Date = info.ModTime().Format("2006-01-02")
 		}
 
-		// Parse title from index.html
+		// Parse title from index.html; skip redirect stubs
 		htmlBytes, err := os.ReadFile(indexPath)
 		if err == nil {
-			meta := ParsePost(string(htmlBytes))
+			htmlContent := string(htmlBytes)
+			if IsRedirect(htmlContent) {
+				continue
+			}
+			meta := ParsePost(htmlContent)
 			if meta.Title != "" {
 				item.Title = meta.Title
 			}
