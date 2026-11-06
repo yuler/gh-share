@@ -192,23 +192,69 @@ func TestParsePostAndBuildHTML(t *testing.T) {
 	}
 }
 
-func TestRenderBodyHTMLTable(t *testing.T) {
-	md := `| Name | Units |
-| ---- | ----- |
-| T4   | 1.19  |
-`
-	htmlOut, err := RenderBodyHTML(md, "note", "", "")
-	if err != nil {
-		t.Fatalf("RenderBodyHTML: %v", err)
+func TestMarkdownExtensions(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    string
+		contains []string
+	}{
+		{
+			name:     "raw html",
+			input:    "This is <b>bold</b> and <kbd>Ctrl</kbd>",
+			contains: []string{"<b>bold</b>", "<kbd>Ctrl</kbd>"},
+		},
+		{
+			name:     "cjk bold brackets",
+			input:    "它就像一个**「云端版的 Python 笔记本」**——你不需要",
+			contains: []string{"<strong>「云端版的 Python 笔记本」</strong>"},
+		},
+		{
+			name:     "cjk book title",
+			input:    "前缀**《书名》**后缀",
+			contains: []string{"<strong>《书名》</strong>"},
+		},
+		{
+			name:     "cjk strikethrough",
+			input:    "这是~~「删除」~~内容",
+			contains: []string{"<del>「删除」</del>"},
+		},
+		{
+			name:     "cjk line break",
+			input:    "第一行中文\n第二行中文",
+			contains: []string{"第一行中文第二行中文"},
+		},
+		{
+			name:     "table",
+			input:    "| A | B |\n|---|---|\n| 1 | 2 |",
+			contains: []string{"<table>", "<th>A</th>", "<td>1</td>"},
+		},
+		{
+			name:     "autolink",
+			input:    "Visit https://google.com directly",
+			contains: []string{`<a href="https://google.com">https://google.com</a>`},
+		},
+		{
+			name:     "tasklist",
+			input:    "- [x] Done\n- [ ] Todo",
+			contains: []string{`type="checkbox"`},
+		},
+		{
+			name:     "footnote",
+			input:    "Here is a note[^1].\n\n[^1]: note body",
+			contains: []string{`class="footnote-ref"`, `class="footnotes"`},
+		},
 	}
-	if !strings.Contains(htmlOut, "<table>") {
-		t.Fatalf("expected <table> in rendered HTML, got:\n%s", htmlOut)
-	}
-	if !strings.Contains(htmlOut, "<th>") || !strings.Contains(htmlOut, "T4") {
-		t.Fatalf("expected table header/cells, got:\n%s", htmlOut)
-	}
-	if strings.Contains(htmlOut, "| T4") {
-		t.Fatalf("pipe table should not remain as plain text, got:\n%s", htmlOut)
+	for _, tc := range cases {
+		out, err := RenderBodyHTML(tc.input, "note", "", "")
+		if err != nil {
+			t.Errorf("%s failed: %v", tc.name, err)
+			continue
+		}
+		for _, exp := range tc.contains {
+			if !strings.Contains(out, exp) {
+				t.Errorf("[%s] expected output to contain %q, got:\n%s", tc.name, exp, out)
+			}
+		}
 	}
 }
 

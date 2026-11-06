@@ -11,13 +11,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tats-u/goldmark-cjk-friendly/v2"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
+	goldmarkHtml "github.com/yuin/goldmark/renderer/html"
 )
 
-// markdown converts CommonMark + GFM (tables, strikethrough, autolink, task lists).
+// markdown converts CommonMark + GFM (tables, strikethrough, autolink, task lists)
+// with CJK-friendly emphasis & strikethrough, East Asian line breaks, footnotes, and raw HTML.
 var markdown = goldmark.New(
-	goldmark.WithExtensions(extension.GFM),
+	goldmark.WithExtensions(
+		extension.GFM,
+		cjkfriendly.CJKFriendlyEmphasisAndStrikethrough,
+		extension.NewCJK(extension.WithEastAsianLineBreaks(), extension.WithEscapedSpace()),
+		extension.Footnote,
+	),
+	goldmark.WithRendererOptions(
+		goldmarkHtml.WithUnsafe(),
+	),
 )
 
 type ShareItem struct {
