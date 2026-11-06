@@ -13,16 +13,51 @@ import (
 
 	"github.com/tats-u/goldmark-cjk-friendly/v2"
 	"github.com/yuin/goldmark"
+	gast "github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/renderer"
 	goldmarkHtml "github.com/yuin/goldmark/renderer/html"
+	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 )
+
+type gfmCJKStrikethroughParser struct {
+	inner parser.InlineParser
+}
+
+func (p *gfmCJKStrikethroughParser) Trigger() []byte {
+	return []byte{'~'}
+}
+
+func (p *gfmCJKStrikethroughParser) Parse(parent gast.Node, block text.Reader, pc parser.Context) gast.Node {
+	line, _ := block.PeekLine()
+	// GFM strikethrough strictly requires double tildes '~~'.
+	// Single tildes (e.g. ~168h, ~7 days) or more than two tildes must NOT be parsed as strikethrough.
+	if len(line) < 2 || line[0] != '~' || line[1] != '~' || (len(line) > 2 && line[2] == '~') {
+		return nil
+	}
+	return p.inner.Parse(parent, block, pc)
+}
+
+type cjkStrikethroughExtension struct{}
+
+func (e *cjkStrikethroughExtension) Extend(m goldmark.Markdown) {
+	m.Parser().AddOptions(parser.WithInlineParsers(
+		util.Prioritized(&gfmCJKStrikethroughParser{inner: cjkfriendly.NewCJKFriendlyStrikethroughParser()}, 499),
+	))
+	m.Renderer().AddOptions(renderer.WithNodeRenderers(
+		util.Prioritized(extension.NewStrikethroughHTMLRenderer(), 500),
+	))
+}
 
 // markdown converts CommonMark + GFM (tables, strikethrough, autolink, task lists)
 // with CJK-friendly emphasis & strikethrough, East Asian line breaks, footnotes, and raw HTML.
 var markdown = goldmark.New(
 	goldmark.WithExtensions(
 		extension.GFM,
-		cjkfriendly.CJKFriendlyEmphasisAndStrikethrough,
+		cjkfriendly.CJKFriendlyEmphasis,
+		&cjkStrikethroughExtension{},
 		extension.NewCJK(extension.WithEastAsianLineBreaks(), extension.WithEscapedSpace()),
 		extension.Footnote,
 	),

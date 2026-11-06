@@ -219,6 +219,11 @@ func TestMarkdownExtensions(t *testing.T) {
 			contains: []string{"<del>「删除」</del>"},
 		},
 		{
+			name:     "single tilde approximation not strikethrough",
+			input:    "~168h（~7 天）",
+			contains: []string{"~168h（~7 天）"},
+		},
+		{
 			name:     "cjk line break",
 			input:    "第一行中文\n第二行中文",
 			contains: []string{"第一行中文第二行中文"},
